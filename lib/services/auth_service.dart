@@ -4,66 +4,82 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final GoogleSignIn _googleSignIn = GoogleSignIn();
 
-  // Senin ID'n (Master Data)
-  static const String _googleClientId =
-      "70654214962-arbptpbtitvaab9hlivgfkhndpqd0m4q.apps.googleusercontent.com";
-      
-  final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
-  Future<void>? _googleInitFuture;
+  // Mevcut kullanıcıyı getir
+  User? get currentUser => _auth.currentUser;
 
-  // Senin yazdığın Initialize fonksiyonu (Master Logic)
-  Future<void> _ensureGoogleSignInInitialized() {
-    return _googleInitFuture ??= _googleSignIn.initialize(
-     // clientId: _googleClientId,
-     // serverClientId: _googleClientId,
-    );
-  }
-
+  // --- GOOGLE İLE GİRİŞ (ESKİ, ÇALIŞAN YÖNTEM) ---
   Future<User?> signInWithGoogle() async {
     try {
-      await _ensureGoogleSignInInitialized();
+      // Temizlik denemesi
+      try { await _googleSignIn.disconnect(); } catch (_) {}
+      try { await _googleSignIn.signOut(); } catch (_) {}
 
-      // --- DÜZELTME BURADA: GÜVENLİ TEMİZLİK ---
-      // Eski oturumu kapatmayı dener. Eğer zaten kapalıysa hata verir, 
-      // biz o hatayı 'catch' ile yutup yola devam ederiz.
-      try {
-        await _googleSignIn.disconnect();
-      } catch (_) {
-        try {
-          await _googleSignIn.signOut();
-        } catch (_) {}
+      // ESKİ YÖNTEM: signIn() kullanılıyor
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      
+      if (googleUser == null) {
+        debugPrint("Google girişi iptal edildi.");
+        return null;
       }
-      // -----------------------------------------
 
-      // Senin çalışan metodun (Master Logic)
-      final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
-
-      final GoogleSignInAuthentication googleAuth = googleUser.authentication;
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
 
       final AuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      // Firebase'e gir
       final UserCredential userCredential = await _auth.signInWithCredential(credential);
+      debugPrint("Google ile giriş başarılı: ${userCredential.user?.email}");
       return userCredential.user;
-      
+
     } catch (e) {
       debugPrint("Auth Service Hatası: $e");
-      // Hata durumunda da temizlik yapmak iyidir
       try { await _googleSignIn.signOut(); } catch (_) {}
       rethrow;
     }
   }
   
+  // Çıkış Yapma Metodu
   Future<void> signOut() async {
-    try {
-      await _ensureGoogleSignInInitialized();
-      await _googleSignIn.disconnect();
-    } catch (_) {
-      await _googleSignIn.signOut();
-    }
+    try { await _googleSignIn.disconnect(); } catch (_) { await _googleSignIn.signOut(); }
     await _auth.signOut();
+  }
+
+  // --- E-POSTA METOTLARI (Bunlar aynı kalıyor, sorun yok) ---
+  Future<User?> registerWithEmailAndPassword(String email, String password) async {
+    try {
+      UserCredential result = await _auth.createUserWithEmailAndPassword(email: email, password: password);
+      User? user = result.user;
+      if (user != null && !user.emailVerified) { await sendVerificationEmail(); }
+      return user;
+    } catch (e) { debugPrint("E-posta kayıt hatası: $e"); rethrow; }
+  }
+
+  Future<User?> signInWithEmailAndPassword(String email, String password) async {
+    try {
+      UserCredential result = await _auth.signInWithEmailAndPassword(email: email, password: password);
+      return result.user;
+    } catch (e) { debugPrint("E-posta giriş hatası: $e"); rethrow; }
+  }
+
+  Future<void> sendVerificationEmail() async {
+    final user = _auth.currentUser;
+    if (user != null && !user.emailVerified) {
+      await user.sendEmailVerification();
+      debugPrint("✅ Doğrulama e-postası gönderildi: ${user.email}");
+    }
+  }
+
+  Future<bool> isEmailVerified() async {
+    final user = _auth.currentUser;
+    if (user != null) {
+      await user.reload();
+      final refreshedUser = _auth.currentUser;
+      return refreshedUser?.emailVerified ?? false;
+    }
+    return false;
   }
 }

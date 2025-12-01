@@ -1,0 +1,53 @@
+import org.gradle.api.tasks.Delete
+import org.gradle.api.file.Directory
+
+// Kotlin sürümünü rootProject.extra'ya yazıyoruz.
+// Böylece tüm alt projeler (app, battery_plus vs.) bu değişkene erişebilir.
+rootProject.extra.apply {
+    set("kotlin_version", "1.9.20")
+}
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        // Kotlin Gradle plugin, yukarıda rootProject.extra'ya yazdığımız sürümü kullanıyor
+        val kotlinVersion = rootProject.extra["kotlin_version"] as String
+        classpath("com.android.tools.build:gradle:8.1.0") // Gerekirse Android Gradle Plugin sürümünü projenle uyumlu yap
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+// Ortak build klasörünü ayarlayan kısım (Flutter'ın ürettiği kısım)
+val newBuildDir: Directory =
+    rootProject.layout.buildDirectory
+        .dir("../../build")
+        .get()
+rootProject.layout.buildDirectory.value(newBuildDir)
+
+// Tüm alt projelere kotlin_version extra property’sini kopyalıyoruz
+subprojects {
+    extra["kotlin_version"] = rootProject.extra["kotlin_version"] as String
+}
+
+subprojects {
+    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
+    project.layout.buildDirectory.value(newSubprojectBuildDir)
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register<Delete>("clean") {
+    delete(rootProject.layout.buildDirectory)
+}

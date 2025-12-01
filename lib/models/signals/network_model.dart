@@ -1,29 +1,24 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class NetworkModel {
-  final String type; // "wifi", "mobile", "none"
-  final String? ssid; // Wi-Fi adı (opsiyonel, izin gerekebilir)
+  final String type; // 'wifi', 'mobile', 'none'
   final DateTime timestamp;
 
   NetworkModel({
     required this.type,
-    this.ssid,
     required this.timestamp,
   });
-
-  factory NetworkModel.fromMap(Map<String, dynamic> data) {
-    return NetworkModel(
-      type: data['type'] ?? 'unknown',
-      ssid: data['ssid'],
-      timestamp: (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
-    );
-  }
 
   Map<String, dynamic> toMap() {
     return {
       'type': type,
-      'ssid': ssid,
-      'timestamp': FieldValue.serverTimestamp(),
+      // ÖNEMLİ: UTC'ye çevir
+      'timestamp': timestamp.toUtc().toIso8601String(),
     };
+  }
+
+  factory NetworkModel.fromMap(Map<String, dynamic> map) {
+    return NetworkModel(
+      type: map['type'] ?? 'none',
+      timestamp: DateTime.parse(map['timestamp']),
+    );
   }
 }

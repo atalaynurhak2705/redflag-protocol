@@ -1,11 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-// Firestore kontrolü için bu import gerekli
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+
 import '../services/auth_service.dart';
-import '../services/firestore_service.dart';
-import '../theme/theme_constants.dart';
 import 'main_screen.dart';
+import 'register_screen.dart';
+
+// Renk Paleti
+const Color kBgDark = Color(0xFF121212);
+const Color kAccentCyan = Color(0xFF00E5FF);
+const Color kTextGrey = Color(0xFFB0BEC5);
+const Color kCardBg = Color(0xFF1E1E1E);
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,284 +21,153 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final AuthService _authService = AuthService();
+  final _formKey = GlobalKey<FormState>();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  
   bool _isLoading = false;
+  bool _obscurePassword = true;
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final AuthService _authService = AuthService();
-  final FirestoreService _firestoreService = FirestoreService();
-  // Firestore instance'ı eklendi
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  // --- E-POSTA GİRİŞ İŞLEMİ ---
+  Future<void> _handleEmailLogin() async {
+    if (!_formKey.currentState!.validate()) return;
 
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
+    setState(() => _isLoading = true);
+    try {
+      User? user = await _authService.signInWithEmailAndPassword(
+        _emailController.text.trim(),
+        _passwordController.text,
+      );
+      if (user != null && mounted) {
+        _navigateToMain();
+      }
+    } on FirebaseAuthException catch (e) {
+      _showErrorDialog(_mapFirebaseErrorToMessage(e.code));
+    } catch (e) {
+      _showErrorDialog("Login error: $e"); // İngilizce
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
-  void _showSnackbar(String message, {bool isError = true}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? AppColors.accentOrange : AppColors.successGreen,
-      ),
+  // --- GOOGLE GİRİŞ İŞLEMİ ---
+  Future<void> _handleGoogleLogin() async {
+    setState(() => _isLoading = true);
+    try {
+      User? user = await _authService.signInWithGoogle();
+      if (user != null && mounted) {
+        _navigateToMain();
+      }
+    } catch (e) {
+      _showErrorDialog("Google login error: $e"); // İngilizce
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _navigateToMain() {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (context) => const MainScreen()),
     );
   }
 
-  // --- DÜZELTİLMİŞ: Email Giriş Fonksiyonu ---
-  Future<void> _handleLogin() async {
-    if (_isLoading) return;
-    setState(() => _isLoading = true);
-
-    try {
-      if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-        _showSnackbar('Lütfen tüm alanları doldurun.', isError: true);
-        return;
-      }
-
-      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
-
-      User? user = userCredential.user;
-
-      if (user != null) {
-        // 🔥 KRİTİK DÜZELTME: Önce kullanıcının verisi var mı kontrol et
-        // Eğer doküman zaten varsa, saveNewUser'ı ÇAĞIRMA.
-        DocumentSnapshot userDoc = await _db.collection('users').doc(user.uid).get();
-
-        if (!userDoc.exists) {
-          // Sadece doküman hiç yoksa oluştur (İlk kayıt durumu)
-          await _firestoreService.saveNewUser(user);
-        }
-        // Doküman varsa dokunmuyoruz, böylece partner_uid korunuyor.
-
-        if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const MainScreen()),
-        );
-      }
-
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-      String msg = "Giriş başarısız.";
-      if (e.code == 'user-not-found' || e.code == 'wrong-password' || e.code == 'invalid-credential') {
-        msg = "Hatalı e-posta veya şifre.";
-      }
-      _showSnackbar(msg, isError: true);
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+  // Hata Mesajları (İngilizce)
+  String _mapFirebaseErrorToMessage(String code) {
+    switch (code) {
+      case 'user-not-found': return "No user found for this email.";
+      case 'wrong-password': return "Wrong password. Please try again.";
+      case 'invalid-email': return "Invalid email format.";
+      case 'user-disabled': return "This account has been disabled.";
+      default: return "Login failed. ($code)";
     }
   }
 
-  // --- DÜZELTİLMİŞ: Google Giriş Fonksiyonu ---
-  Future<void> _handleGoogleSignIn() async {
-    if (_isLoading) return;
-    setState(() => _isLoading = true);
-
-    try {
-      final User? user = await _authService.signInWithGoogle();
-
-      if (user != null) {
-        // 🔥 KRİTİK DÜZELTME: Google için de aynısını yapıyoruz.
-        // Önce kullanıcının verisi var mı kontrol et.
-        DocumentSnapshot userDoc = await _db.collection('users').doc(user.uid).get();
-
-        if (!userDoc.exists) {
-          // Sadece doküman hiç yoksa oluştur
-          await _firestoreService.saveNewUser(user);
-        }
-        // Doküman varsa dokunmuyoruz.
-
-        if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const MainScreen()),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      _showSnackbar('Google girişi başarısız.', isError: true);
-      debugPrint("Google Sign In Error: $e");
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+  void _showErrorDialog(String message) {
+    showDialog(context: context, builder: (ctx) => AlertDialog(backgroundColor: kCardBg, title: Text("Login Error", style: GoogleFonts.montserrat(color: Colors.white)), content: Text(message, style: GoogleFonts.montserrat(color: kTextGrey)), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: Text("OK", style: GoogleFonts.montserrat(color: kAccentCyan)))]));
   }
-  // ----------------------------------
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-
     return Scaffold(
-      backgroundColor: AppColors.backgroundDark,
+      backgroundColor: kBgDark,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Başlık
-                Text(
-                  "Login here",
-                  style: TextStyle(
-                    color: AppColors.primaryBlue,
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  "Welcome back you've been missed!",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: AppColors.textGrey,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 50),
+            padding: const EdgeInsets.all(24.0),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Logo ve Başlık
+                  Icon(Icons.lock_outline_rounded, size: 80, color: kAccentCyan),
+                  const SizedBox(height: 24),
+                  // İngilizce Başlıklar
+                  Text("Welcome Back!", style: GoogleFonts.montserrat(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white), textAlign: TextAlign.center),
+                  const SizedBox(height: 8),
+                  Text("Sign in to connect with your partner.", style: GoogleFonts.montserrat(fontSize: 16, color: kTextGrey), textAlign: TextAlign.center),
+                  const SizedBox(height: 48),
 
-                // Input Alanları (Flutter Icons ile)
-                _buildModernInput(
-                  controller: _emailController,
-                  hint: "Email",
-                  icon: Icons.email_outlined, // Flutter ikonu
-                ),
-                const SizedBox(height: 20),
-                _buildModernInput(
-                  controller: _passwordController,
-                  hint: "Password",
-                  icon: Icons.lock_outline, // Flutter ikonu
-                  isPassword: true,
-                ),
+                  // E-posta ve Şifre Alanları (İngilizce Label ve Hatalar)
+                  _buildTextField(controller: _emailController, label: "Email", icon: Icons.email_outlined, keyboardType: TextInputType.emailAddress, validator: (val) => (val == null || !val.contains('@')) ? 'Please enter a valid email.' : null),
+                  const SizedBox(height: 20),
+                  _buildTextField(controller: _passwordController, label: "Password", icon: Icons.lock_outline, obscureText: _obscurePassword, toggleObscure: () => setState(() => _obscurePassword = !_obscurePassword), validator: (val) => (val == null || val.isEmpty) ? 'Please enter your password.' : null),
+                  const SizedBox(height: 24),
 
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () {
-                      _showSnackbar("Şifre sıfırlama yakında!", isError: false);
+                  // GİRİŞ YAP BUTONU (İngilizce)
+                  SizedBox(
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _handleEmailLogin,
+                      style: ElevatedButton.styleFrom(backgroundColor: kAccentCyan, foregroundColor: kBgDark, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
+                      child: _isLoading ? const CircularProgressIndicator(color: kBgDark) : Text("LOG IN", style: GoogleFonts.montserrat(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // VEYA AYIRAÇ (İngilizce)
+                  Row(children: [Expanded(child: Divider(color: kTextGrey.withOpacity(0.3))), Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text("OR", style: GoogleFonts.montserrat(color: kTextGrey, fontWeight: FontWeight.w500))), Expanded(child: Divider(color: kTextGrey.withOpacity(0.3)))]),
+                  const SizedBox(height: 24),
+
+                  // GOOGLE GİRİŞ BUTONU (İngilizce)
+                  OutlinedButton.icon(
+                    onPressed: _isLoading ? null : _handleGoogleLogin,
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: BorderSide(color: kTextGrey.withOpacity(0.5)), padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                    icon: const FaIcon(FontAwesomeIcons.google, size: 20),
+                    label: Text("Continue with Google", style: GoogleFonts.montserrat(fontSize: 16, fontWeight: FontWeight.w600)),
+                  ),
+                  const SizedBox(height: 48),
+
+                  // KAYIT OL YÖNLENDİRMESİ (İngilizce)
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (context) => const RegisterScreen()),
+                      );
                     },
-                    child: Text(
-                      "Forgot your password?",
-                      style: TextStyle(
-                        color: AppColors.primaryBlue,
-                        fontWeight: FontWeight.w600,
+                    child: RichText(
+                      textAlign: TextAlign.center,
+                      text: TextSpan(
+                        style: GoogleFonts.montserrat(color: kTextGrey, fontSize: 16),
+                        children: [
+                          const TextSpan(text: "Don't have an account? "),
+                          TextSpan(text: "Sign Up", style: TextStyle(color: kAccentCyan, fontWeight: FontWeight.bold)),
+                        ],
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 30),
-
-                // Ana Giriş Butonu
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _handleLogin,
-                    style: AppStyles.primaryButtonStyle,
-                    child: _isLoading
-                        ? const CircularProgressIndicator(color: Colors.black)
-                        : const Text("Sign in"),
-                  ),
-                ),
-                const SizedBox(height: 40),
-
-                Text(
-                  "Or continue with",
-                  style: TextStyle(color: AppColors.textGrey, fontWeight: FontWeight.w500),
-                ),
-                const SizedBox(height: 20),
-
-                // Sosyal Medya Butonları (Google için yerleşik ikonu kullandık)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // Google Butonu (Aktif)
-                    _buildSocialButton(
-                      icon: Icons.g_mobiledata, // Google'ın yerleşik ikonu
-                      onTap: _isLoading ? null : _handleGoogleSignIn,
-                    ),
-                    const SizedBox(width: 20),
-                    // Apple (Pasif)
-                    _buildSocialButton(icon: Icons.apple, onTap: null),
-                    const SizedBox(width: 20),
-                    // Facebook (Pasif)
-                    _buildSocialButton(icon: Icons.facebook, onTap: null),
-                  ],
-                ),
-                 const SizedBox(height: 40),
-
-                 Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text("Not a member? ", style: TextStyle(color: AppColors.textGrey)),
-                    GestureDetector(
-                      onTap: () => _showSnackbar("Kayıt ekranı yakında!", isError: false),
-                      child: Text("Register now", style: TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.bold)),
-                    )
-                  ],
-                 )
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
-
-  // --- YARDIMCI WIDGET'LAR (SVG GEREKTİRMEYEN) ---
-
-  // Modern Input Alanı (Flutter'ın Kendi İkonlarıyla)
-  Widget _buildModernInput({
-    required TextEditingController controller,
-    required String hint,
-    required IconData icon, // IconData alacak
-    bool isPassword = false,
-  }) {
-    return TextField(
-      controller: controller,
-      obscureText: isPassword,
-      style: TextStyle(color: AppColors.textWhite),
-      decoration: InputDecoration(
-        filled: true,
-        fillColor: AppColors.surfaceDark,
-        hintText: hint,
-        hintStyle: TextStyle(color: AppColors.textGrey),
-        prefixIcon: Icon(icon, color: AppColors.textGrey, size: 24), // Doğrudan Icon kullanıyoruz
-        contentPadding: const EdgeInsets.symmetric(vertical: 18),
-        border: OutlineInputBorder(
-          borderRadius: AppStyles.defaultRadius,
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: AppStyles.defaultRadius,
-          borderSide: BorderSide.none,
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: AppStyles.defaultRadius,
-          borderSide: BorderSide(color: AppColors.primaryBlue, width: 1.5),
-        ),
-      ),
-    );
-  }
-
-  // Sosyal Medya Butonu (Flutter'ın Kendi İkonlarıyla)
-  Widget _buildSocialButton({required IconData icon, VoidCallback? onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.surfaceDark,
-          borderRadius: AppStyles.defaultRadius,
-          border: Border.all(color: Colors.white.withOpacity(0.05)),
-        ),
-        child: Icon(icon, color: AppColors.textWhite, size: 28), // Doğrudan Icon kullanıyoruz
-      ),
-    );
+   // TextField Yardımcısı (Aynı)
+  Widget _buildTextField({required TextEditingController controller, required String label, required IconData icon, bool obscureText = false, TextInputType? keyboardType, String? Function(String?)? validator, VoidCallback? toggleObscure}) {
+    return TextFormField(controller: controller, obscureText: obscureText, keyboardType: keyboardType, style: GoogleFonts.montserrat(color: Colors.white), decoration: InputDecoration(labelText: label, labelStyle: GoogleFonts.montserrat(color: kTextGrey), prefixIcon: Icon(icon, color: kTextGrey), suffixIcon: toggleObscure != null ? IconButton(icon: Icon(obscureText ? Icons.visibility_outlined : Icons.visibility_off_outlined, color: kTextGrey), onPressed: toggleObscure) : null, filled: true, fillColor: kCardBg, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none), focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: kAccentCyan)), errorStyle: GoogleFonts.montserrat(color: Colors.redAccent)), validator: validator);
   }
 }

@@ -3,40 +3,50 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class UserModel {
   final String uid;
   final String email;
-  String? partnerUid;
-  int trustScore; // Bu puan, sinyallere göre dinamik olarak hesaplanacak
-  DateTime? createdAt;
-  DateTime? pairedAt;
+  final DateTime createdAt;
+  final int trustScore;
+  final String? partnerUid;
+  final String? pairingCode;
 
   UserModel({
     required this.uid,
     required this.email,
-    this.partnerUid,
+    required this.createdAt,
     this.trustScore = 1000,
-    this.createdAt,
-    this.pairedAt,
+    this.partnerUid,
+    this.pairingCode,
   });
 
-  factory UserModel.fromFirestore(DocumentSnapshot doc) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+  // ==================================================
+  // --- İŞTE EKSİK OLAN KRİTİK PARÇA: fromMap ---
+  // ==================================================
+  // Firestore'dan gelen Map verisini alıp UserModel objesine çevirir.
+  factory UserModel.fromMap(Map<String, dynamic> data) {
     return UserModel(
-      uid: doc.id,
+      uid: data['uid'] ?? '',
       email: data['email'] ?? '',
+      // Firestore Timestamp'ini güvenli bir şekilde Dart DateTime'a çevir
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now().toUtc(),
+      // Sayısal değerleri güvenli bir şekilde int'e çevir
+      trustScore: data['trust_score']?.toInt() ?? 1000,
       partnerUid: data['partner_uid'],
-      trustScore: data['trust_score'] ?? 1000,
-      createdAt: (data['created_at'] as Timestamp?)?.toDate(),
-      pairedAt: (data['paired_at'] as Timestamp?)?.toDate(),
+      pairingCode: data['pairing_code'],
     );
   }
 
+  // ==================================================
+  // --- toMap METODU (Veri Yazmak İçin) ---
+  // ==================================================
+  // UserModel objesini Firestore'a kaydedilebilecek bir Map'e çevirir.
   Map<String, dynamic> toMap() {
-    // ... (Aynı kalacak, sadece kayıt sırasında kullanılır)
     return {
+      'uid': uid,
       'email': email,
-      'partner_uid': partnerUid,
+      // DateTime'ı Firestore'un anlayacağı Timestamp formatına çevir
+      'createdAt': Timestamp.fromDate(createdAt),
       'trust_score': trustScore,
-      'created_at': createdAt != null ? Timestamp.fromDate(createdAt!) : FieldValue.serverTimestamp(),
-      'paired_at': pairedAt != null ? Timestamp.fromDate(pairedAt!) : null,
+      'partner_uid': partnerUid,
+      'pairing_code': pairingCode,
     };
   }
 }

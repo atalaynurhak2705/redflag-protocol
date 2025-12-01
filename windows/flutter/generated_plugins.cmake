@@ -3,8 +3,8 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  cloud_firestore
-  firebase_auth
+  battery_plus
+  connectivity_plus
   firebase_core
 )
 
