@@ -1,116 +1,230 @@
 import 'dart:async';
+import 'dart:ui';
+import 'dart:isolate';
+
+// Paket ismini doğru import ediyoruz
+import 'package:flutter_notification_listener/flutter_notification_listener.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:battery_plus/battery_plus.dart'; // Gerçek batarya paketi
+import 'package:battery_plus/battery_plus.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 import '../models/signals/battery_model.dart';
+import '../models/signals/network_model.dart';
+import '../models/signals/media_model.dart';
 import '../models/permission_model.dart';
 
+// --- TOP-LEVEL CALLBACK ---
+// --- TOP-LEVEL CALLBACK (DÜZELTİLDİ) ---
+@pragma('vm:entry-point')
+void onNotificationData(NotificationEvent event) {
+  print("🔔 Isolate Tetiklendi: ${event.packageName}");
+  
+  // EKSİK OLAN KÖPRÜ KODU BURASI:
+  // Arka plandan ana uygulamaya veriyi fırlatıyoruz.
+  final SendPort? send = IsolateNameServer.lookupPortByName("notifications_send_port");
+  if (send != null) {
+    send.send(event);
+  } else {
+    print("❌ HATA: Ana uygulamaya giden port kapalı!");
+  }
+}
+
 class BackgroundService {
-  // Singleton pattern (Uygulamada tek bir örneği olsun)
   static final BackgroundService _instance = BackgroundService._internal();
   factory BackgroundService() => _instance;
   BackgroundService._internal();
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final Battery _battery = Battery(); // Batarya sensörüne erişim nesnesi
   
-  Timer? _timer; // Periyodik işlem için zamanlayıcı
+  final Battery _battery = Battery();
+  final Connectivity _connectivity = Connectivity();
+  
+  Timer? _timer;
+  ReceivePort? _port;
+  bool _isServiceRunning = false;
 
-  // --- SERVİSİ BAŞLAT ---
-  // Genellikle MainScreen açıldığında çağrılır.
+  // --- MÜZİK UYGULAMALARI LİSTESİ ---
+  final List<String> _musicApps = [
+    'com.spotify.music', // Spotify
+    'com.google.android.apps.youtube.music',
+    'com.apple.android.music',
+    'deezer.android.app',
+    'com.soundcloud.android',
+    'com.google.android.youtube',
+    'com.android.chrome', 
+  ];
+
   void startService() {
-    // Eğer zaten çalışıyorsa önce durdur, üst üste binmesin.
-    stopService();
+    if (_isServiceRunning) return;
+    _isServiceRunning = true;
+    print("🤖 BackgroundService: Başlatıldı.");
 
-    print("🤖 Arka Plan Servisi: Başlatılıyor...");
-
-    // İlk çalıştırmada hemen bir veri gönderelim.
-    _updateRealBatteryData();
-
-    // Sonrasında her 5 dakikada bir tekrar etsin.
-    // (Gerçek hayatta bu süre 15-30 dk olabilir, test için 5 dk iyi)
-    _timer = Timer.periodic(const Duration(minutes: 5), (timer) {
-      _updateRealBatteryData();
+    _updateAllSensors();
+    _timer = Timer.periodic(const Duration(minutes: 15), (timer) {
+      _updateAllSensors();
     });
+
+    _startNotificationListener();
   }
 
-  // --- SERVİSİ DURDUR ---
-  // Çıkış yapıldığında çağrılır.
   void stopService() {
-    if (_timer != null && _timer!.isActive) {
-      _timer!.cancel();
-      print("🤖 Arka Plan Servisi: Durduruldu.");
-    }
+    _timer?.cancel();
+    _port?.close();
+    _isServiceRunning = false;
+    print("🛑 BackgroundService: Durduruldu.");
   }
 
-  // --- ANA İŞLEM: GERÇEK BATARYA VERİSİNİ GÜNCELLE ---
-  Future<void> _updateRealBatteryData() async {
+  Future<void> _startNotificationListener() async {
     final user = _auth.currentUser;
-    // 1. KONTROL: Kullanıcı giriş yapmış mı?
-    if (user == null) {
-        print("🤖 Arka Plan Uyarısı: Kullanıcı yok, veri gönderilemedi.");
-        stopService(); // Kullanıcı yoksa servisi durdur.
-        return;
-    }
-
-    // 2. KONTROL: Kullanıcı batarya paylaşımına İZİN VERMİŞ Mİ?
-    // Bu çok önemli. Kendi veritabanımıza bakıp izni kontrol ediyoruz.
-    bool isAllowed = await _checkIfBatteryShareAllowed(user.uid);
-    if (!isAllowed) {
-      print("🤖 Arka Plan Bilgisi: Batarya paylaşım izni KAPALI. Veri gönderilmedi.");
-      return; // İzin yoksa işlem yapma.
-    }
+    if (user == null) return;
 
     try {
-      print("🔋 Sensör: Gerçek batarya verisi okunuyor...");
-      
-      // --- GERÇEK SENSÖR VERİLERİ OKUNUYOR ---
-      final int level = await _battery.batteryLevel;
-      final BatteryState state = await _battery.batteryState;
-      // Şarj oluyor mu? (Tam doluysa veya fişe takılıysa evet)
-      bool isCharging = state == BatteryState.charging || state == BatteryState.full;
+      // DÜZELTME 1: Sınıf adı 'NotificationsListener' olarak güncellendi
+      var hasPerm = await NotificationsListener.hasPermission;
+      if (hasPerm != true) {
+        print("⚠️ SİSTEM İZNİ YOK: Kullanıcı Ayarlardan 'Notification Access' vermemiş!");
+        return;
+      }
 
-      // Modeli oluştur (UTC Zaman damgasıyla)
-      BatteryModel batteryData = BatteryModel(
-        level: level,
-        isCharging: isCharging,
+      // DÜZELTME 2: 'NotificationsListener' kullanıldı
+      await NotificationsListener.initialize(callbackHandle: onNotificationData);
+      
+      // Port Kurulumu (Veriyi yakalamak için şart)
+      _port = ReceivePort();
+      // 'notifications_send_port' ismi plugin.dart içindeki SEND_PORT_NAME ile aynı olmalı
+      IsolateNameServer.removePortNameMapping("notifications_send_port"); 
+      IsolateNameServer.registerPortWithName(_port!.sendPort, "notifications_send_port");
+
+      // Portu Dinle
+      _port!.listen((message) {
+        // Gelen mesaj NotificationEvent tipindedir
+        if (message is NotificationEvent) {
+          _processNotificationEvent(message);
+        } else {
+          print("❓ Bilinmeyen veri tipi: $message");
+        }
+      });
+
+      // DÜZELTME 3: Servisi Başlat
+      await NotificationsListener.startService();
+      print("👂 KULAK AÇIK: Dinlemeye başladı...");
+
+    } catch (e) {
+      print("❌ Servis Başlatma Hatası: $e");
+    }
+  }
+
+  Future<void> _processNotificationEvent(NotificationEvent event) async {
+    if (!_isServiceRunning) return;
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    final String pkg = event.packageName ?? "unknown";
+    final String title = event.title ?? "";
+    final String body = event.text ?? ""; // Şarkıcı adı genelde buradadır
+
+    print("🔥 DEBUG: Bildirim Geldi -> $pkg | $title");
+
+    PermissionModel? perms = await _getMyPermissions(user.uid);
+    bool isMediaAllowed = perms?.isMediaPermitted ?? true; 
+
+    // --- MEDYA KONTROLÜ ---
+    if (_musicApps.contains(pkg)) {
+      print("🔥 DEBUG: Müzik Uygulaması Tespit Edildi! ($pkg)");
+      
+      if (!isMediaAllowed) {
+        print("⛔ Medya izni veritabanında kapalı.");
+        return;
+      }
+
+      if (title.isEmpty || title.contains("Android System")) return;
+
+      final mediaData = MediaModel(
+        isPlaying: true, 
+        packageName: pkg,
+        title: title,
+        artist: body,
         timestamp: DateTime.now().toUtc(),
       );
 
-      // Firestore'a yaz
-      await _db
-          .collection('users')
-          .doc(user.uid)
-          .collection('device_status')
-          .doc('battery')
-          .set(batteryData.toMap());
+      print("📝 FIRESTORE YAZILIYOR: ${mediaData.toMap()}");
 
-      print("✅ Arka Plan Başarısı: Gerçek batarya verisi güncellendi (%$level, Şarj: $isCharging)");
+      await _db.collection('users').doc(user.uid).collection('device_status').doc('media').set(mediaData.toMap());
+      print("✅ MEDYA YAZILDI!");
+      return;
+    }
 
+    // --- DİĞER BİLDİRİMLER (Şimdilik pasif) ---
+    /*
+    if (pkg.contains("android.system") || pkg.contains("com.google.android.gms")) return;
+    try {
+      final notificationData = {
+        'package_name': pkg,
+        'title': title,
+        'timestamp': FieldValue.serverTimestamp(),
+        'is_read': false,
+        'category': _categorizeApp(pkg),
+      };
+      // await _db.collection('users').doc(user.uid).collection('notifications').add(notificationData);
     } catch (e) {
-      print("❌ Arka Plan Hatası (Batarya): $e");
+      print("❌ Hata: $e");
+    }
+    */
+  }
+
+  String _categorizeApp(String packageName) {
+    if (packageName.contains("whatsapp")) return "Message";
+    return "Other";
+  }
+
+  Future<void> _updateAllSensors() async {
+    final user = _auth.currentUser;
+    if (user == null) { stopService(); return; }
+    
+    PermissionModel? perms = await _getMyPermissions(user.uid);
+    // İzin null ise varsayılan olarak devam et (Test için)
+    
+    // Batarya
+    if (perms?.isBatteryPermitted ?? true) {
+       await _processBattery(user.uid);
+    }
+    // Ağ
+    if (perms?.isNetworkPermitted ?? true) {
+       await _processNetwork(user.uid);
     }
   }
 
-  // Yardımcı Metot: İzin kontrolü
-  Future<bool> _checkIfBatteryShareAllowed(String uid) async {
+  Future<void> _processBattery(String uid) async {
     try {
-      DocumentSnapshot doc = await _db
-          .collection('users')
-          .doc(uid)
-          .collection('permissions')
-          .doc('status')
-          .get();
+      final int level = await _battery.batteryLevel;
+      final BatteryState state = await _battery.batteryState;
+      bool isCharging = (state == BatteryState.charging || state == BatteryState.full);
+      final data = BatteryModel(level: level, isCharging: isCharging, timestamp: DateTime.now().toUtc());
+      await _db.collection('users').doc(uid).collection('device_status').doc('battery').set(data.toMap());
+    } catch (_) {}
+  }
 
+  Future<void> _processNetwork(String uid) async {
+    try {
+      final ConnectivityResult result = await _connectivity.checkConnectivity();
+      String type = "Unknown";
+      if (result == ConnectivityResult.wifi) type = "WI-FI";
+      else if (result == ConnectivityResult.mobile) type = "MOBILE DATA";
+      else type = "OFFLINE";
+      final data = NetworkModel(type: type, timestamp: DateTime.now().toUtc());
+      await _db.collection('users').doc(uid).collection('device_status').doc('network').set(data.toMap());
+    } catch (_) {}
+  }
+
+  Future<PermissionModel?> _getMyPermissions(String uid) async {
+    try {
+      DocumentSnapshot doc = await _db.collection('users').doc(uid).collection('permissions').doc('status').get();
       if (doc.exists && doc.data() != null) {
-        final perms = PermissionModel.fromMap(doc.data() as Map<String, dynamic>);
-        return perms.isBatteryPermitted;
+        return PermissionModel.fromMap(doc.data() as Map<String, dynamic>);
       }
-    } catch (e) {
-        print("İzin kontrol hatası: $e");
-    }
-    return false; // Veri yoksa veya hata varsa izin yok say.
+    } catch (_) {}
+    return null;
   }
 }

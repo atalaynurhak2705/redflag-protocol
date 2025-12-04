@@ -14,6 +14,8 @@ dependencies:
   # --- PAKETLER TAM SÜRÜME SABİTLENDİ (^ işareti yok) ---
   cupertino_icons: 1.0.2
   
+  flutter_notification_listener:
+    path: ./packages/flutter_notification_listener
   # Firebase ve Google Sign In (Eski, çalışan sürümler)
   firebase_core: 2.13.1
   firebase_auth: 4.6.2
@@ -21,7 +23,7 @@ dependencies:
   google_sign_in: 5.4.4
   cloud_firestore: 4.8.0
   
-  google_fonts: 4.0.4
+  google_fonts: ^6.1.0  # En son sürüm
   intl: 0.18.1
   uuid: 3.0.7
   lottie: 2.3.2
@@ -30,6 +32,7 @@ dependencies:
   # --- SENSÖR PAKETLERİ ---
   battery_plus: 4.0.1
   connectivity_plus: 4.0.1
+ 
 
 dev_dependencies:
   flutter_test:

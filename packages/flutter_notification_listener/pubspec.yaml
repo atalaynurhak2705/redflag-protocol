@@ -1,0 +1,23 @@
+name: flutter_notification_listener
+description: Local notification listener plugin.
+version: 1.3.4
+
+environment:
+  sdk: ">=2.12.0 <4.0.0"
+  flutter: ">=1.20.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+# --- BU KISIM ÇOK KRİTİK (Flutter'ın paketi tanıması için) ---
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: im.zoe.labs.flutter_notification_listener
+        pluginClass: FlutterNotificationListenerPlugin
