@@ -1,47 +1,46 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'firebase_options.dart';
-import 'screens/login_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/services.dart';
 
-Future<void> main() async {
-  // Global error handler - AssetManifest.json hatasını sessizce yakala
-  FlutterError.onError = (FlutterErrorDetails details) {
-    // AssetManifest.json hatasını sessizce geç
-    if (details.exception.toString().contains('AssetManifest.json') ||
-        details.exception.toString().contains('Unable to load asset')) {
-      // Sessizce geç, terminalde gösterme
-      return;
-    }
-    // Diğer hataları normal şekilde göster
-    FlutterError.presentError(details);
-  };
+// Firebase Ayarları
+import 'firebase_options.dart'; 
 
-  // Platform-specific error handler (Android/iOS)
-  PlatformDispatcher.instance.onError = (error, stack) {
-    // AssetManifest.json hatasını sessizce geç
-    if (error.toString().contains('AssetManifest.json') ||
-        error.toString().contains('Unable to load asset')) {
-      return true; // Hatayı yakaladık, devam et
-    }
-    // Diğer hataları göster
-    return false;
-  };
+// Ekranlar
+import 'screens/landing_screen.dart'; // <-- YENİ: Giriş Kapısı
+import 'screens/main_screen.dart';    // <-- V5.0: Zincir Kontrol Merkezi
+// import 'screens/login_screen.dart'; // Artık direkt buraya gitmiyoruz
 
-  // 1. Flutter motorunu hazırlıyoruz
+// Servisler
+import 'services/background_service.dart';
+
+@pragma('vm:entry-point')
+void notificationTapBackground(dynamic notification) {}
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 2. Firebase'i başlatıyoruz (Platforma göre otomatik ayar)
+  
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // 3. Uygulamayı çalıştırıyoruz
-  runApp(const RedFlagApp());
+  // Status bar şeffaflığı (Modern Görünüm)
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+  ));
+
+  // Eğer oturum açıksa servisi başlat
+  if (FirebaseAuth.instance.currentUser != null) {
+    BackgroundService().startService();
+  }
+
+  runApp(const MyApp());
 }
 
-class RedFlagApp extends StatelessWidget {
-  const RedFlagApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -50,11 +49,47 @@ class RedFlagApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: Colors.black,
+        scaffoldBackgroundColor: const Color(0xFF050505),
+        primaryColor: const Color(0xFF05D9E8),
         useMaterial3: true,
+        textTheme: GoogleFonts.montserratTextTheme(
+          Theme.of(context).textTheme.apply(bodyColor: Colors.white, displayColor: Colors.white),
+        ),
       ),
-      // Şimdilik direkt Login ekranını açıyoruz
-      home: const LoginScreen(),
+      home: const AuthGate(),
+    );
+  }
+}
+
+// --- AUTH GATE (GİRİŞ KONTROLÜ) ---
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        // 1. Bekleme (Splash)
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: Color(0xFF050505),
+            body: Center(child: CircularProgressIndicator(color: Color(0xFF05D9E8))),
+          );
+        }
+
+        // 2. Giriş Yapılmış -> MAIN SCREEN (Zincir Kontrolü)
+        if (snapshot.hasData) {
+          BackgroundService().startService();
+          // V5.0 KURALI: Direkt Dashboard değil, MainScreen açılır.
+          // MainScreen partner kontrolü yapar: Yoksa Zincir, Varsa Dashboard.
+          return const MainScreen(); 
+        }
+
+        // 3. Giriş Yapılmamış -> LANDING PAGE (Karşılama Ekranı)
+        // Kullanıcı buradan Login veya Register'a gider.
+        return const LandingScreen();
+      },
     );
   }
 }

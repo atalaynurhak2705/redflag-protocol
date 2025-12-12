@@ -15,19 +15,11 @@ import '../models/signals/media_model.dart';
 import '../models/permission_model.dart';
 
 // --- TOP-LEVEL CALLBACK ---
-// --- TOP-LEVEL CALLBACK (DÜZELTİLDİ) ---
 @pragma('vm:entry-point')
 void onNotificationData(NotificationEvent event) {
+  // Arka plan izolesi. Burası şimdilik boş kalabilir, 
+  // çünkü plugin.dart içindeki _defaultCallbackHandle zaten port'a veriyi atıyor.
   print("🔔 Isolate Tetiklendi: ${event.packageName}");
-  
-  // EKSİK OLAN KÖPRÜ KODU BURASI:
-  // Arka plandan ana uygulamaya veriyi fırlatıyoruz.
-  final SendPort? send = IsolateNameServer.lookupPortByName("notifications_send_port");
-  if (send != null) {
-    send.send(event);
-  } else {
-    print("❌ HATA: Ana uygulamaya giden port kapalı!");
-  }
 }
 
 class BackgroundService {

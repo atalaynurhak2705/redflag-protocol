@@ -10,6 +10,7 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    // --- JAVA 17 AYARLARI (DOĞRU) ---
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -18,16 +19,16 @@ android {
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_17.toString()
     }
+    // --------------------------------
 
     defaultConfig {
         applicationId = "com.example.rf_protocol"
-        // Bildirim Servisi için en az 21 gerekir, 23 daha güvenlidir.
-        minSdkVersion = flutter.minSdkVersion 
+        minSdkVersion = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         
-        // --- MULTIDEX AKTİF EDİLDİ ---
+        // MultiDex Aktif
         multiDexEnabled = true
     }
 
@@ -37,7 +38,8 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            // Release için imza ayarları
+            signingConfig = signingConfigs.debug
         }
     }
 }
@@ -46,13 +48,13 @@ flutter {
     source = "../.."
 }
 
-// --- EKLENEN BAĞIMLILIKLAR ---
 dependencies {
-    // Mevcut olanlar...
+    // MultiDex Core
     implementation 'androidx.multidex:multidex:2.0.1'
+    
+    // Firebase
     implementation platform('com.google.firebase:firebase-bom:32.7.0')
-
-    // --- BU SATIRI EKLE (Crash Çözümü İçin) ---
+    
+    // Startup Runtime (Crash Fix)
     implementation "androidx.startup:startup-runtime:1.1.1"
-    // -------------------------------------------
 }

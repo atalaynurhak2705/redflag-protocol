@@ -10,7 +10,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
+  shared_preferences: ^2.2.2
   # --- PAKETLER TAM SÜRÜME SABİTLENDİ (^ işareti yok) ---
   cupertino_icons: 1.0.2
   
@@ -32,7 +32,9 @@ dependencies:
   # --- SENSÖR PAKETLERİ ---
   battery_plus: 4.0.1
   connectivity_plus: 4.0.1
- 
+  flutter_animate: ^4.5.0  # Profesyonel animasyonlar
+  glass_kit: ^3.0.0        # Buzlu cam efekti
+  phosphor_flutter: ^2.0.0 # Modern ikon seti
 
 dev_dependencies:
   flutter_test:

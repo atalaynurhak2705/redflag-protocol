@@ -26,50 +26,49 @@ subprojects {
     project.evaluationDependsOn(':app')
 }
 
-// --- GLOBAL YAMA (ZAMANLAMA HATASI DÜZELTİLDİ) ---
+// --- V4 ULTRA SAFE GLOBAL CONFIGURATION ---
 subprojects {
-    // Yapılacak ayarları bir değişkene (fonksiyona) atıyoruz
-    def configureApp = {
+    // Ayarları bir blok içine alıyoruz ki duruma göre çağırabilelim
+    def configureProjectSettings = {
+        // 1. Android Ayarları (Sadece Android projeleri için)
         if (project.hasProperty('android')) {
             project.android {
-                // 1. BuildConfig Hatası İçin
-                buildFeatures {
-                    buildConfig = true
-                }
-
-                // 2. Namespace Hatası İçin (Otomatik Tamamlama)
+                // Namespace eksikse tamamla
                 if (namespace == null) {
                     namespace project.group.toString()
                 }
-
-                // 3. Java Sürüm Çakışması İçin
+                // BuildConfig özelliğini aç (cloud_firestore için şart)
+                buildFeatures {
+                    buildConfig = true
+                }
+                // Java 17 Standartı
                 compileOptions {
-                    sourceCompatibility JavaVersion.VERSION_1_8
-                    targetCompatibility JavaVersion.VERSION_1_8
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
                 }
             }
-            
-            // 4. Kotlin Sürüm Çakışması İçin
-            project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-                kotlinOptions {
-                    jvmTarget = "1.8"
-                }
+        }
+        
+        // 2. Kotlin Ayarları (Evrensel - Android bloğunun dışında olmalı)
+        project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+            kotlinOptions {
+                jvmTarget = "17"
             }
         }
     }
 
-    // KRİTİK KONTROL: Proje zaten hazırlandı mı?
+    // --- ZAMANLAMA KONTROLÜ (CRASH FIX) ---
     if (project.state.executed) {
-        // Evet, geç kaldık -> HEMEN UYGULA
-        configureApp()
+        // Proje zaten değerlendirildiyse, bekleme yapma HEMEN uygula
+        configureProjectSettings()
     } else {
-        // Hayır, zaman var -> SIRAYA KOY
+        // Henüz bitmediyse, bittiğinde uygula
         project.afterEvaluate {
-            configureApp()
+            configureProjectSettings()
         }
     }
 }
-// -------------------------------------------------
+// ------------------------------------------
 
 tasks.register("clean", Delete) {
     delete rootProject.buildDir

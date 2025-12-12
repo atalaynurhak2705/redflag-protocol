@@ -1,20 +1,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// Log Türleri
-enum LogType {
-  info,       // Genel bilgi (Mavi)
-  warning,    // Uyarı (Turuncu)
-  danger,     // Kritik/Kırmızı Bayrak (Kırmızı)
-  success     // Başarım/Puan Kazanma (Yeşil)
-}
+enum LogType { info, warning, success, danger }
 
 class LogModel {
   final String id;
-  final String title;       // Başlık (Örn: "Batarya Güncellendi")
-  final String description; // Detay (Örn: "Partnerin şarj durumu sorgulandı.")
-  final int pointChange;    // Puan etkisi (Örn: -10)
-  final LogType type;       // Türü
-  final DateTime timestamp; // Zamanı
+  final String title;
+  final String description;
+  final int pointChange;
+  final LogType type;
+  final DateTime timestamp;
+  final String actorUid;
 
   LogModel({
     required this.id,
@@ -23,38 +18,30 @@ class LogModel {
     required this.pointChange,
     required this.type,
     required this.timestamp,
+    required this.actorUid,
   });
 
-  // Firestore'dan okuma
   factory LogModel.fromMap(String id, Map<String, dynamic> map) {
+    // Log tipini string'den enum'a çevir
+    LogType parseType(String? typeStr) {
+      switch (typeStr) {
+        case 'warning': return LogType.warning;
+        case 'success': return LogType.success;
+        case 'danger': return LogType.danger;
+        default: return LogType.info;
+      }
+    }
+
     return LogModel(
       id: id,
-      title: map['title'] ?? '',
+      title: map['title'] ?? 'Unknown Activity',
       description: map['description'] ?? '',
       pointChange: map['point_change'] ?? 0,
-      type: _stringToType(map['type']),
-      timestamp: (map['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      type: parseType(map['type']),
+      timestamp: map['timestamp'] != null 
+          ? (map['timestamp'] as Timestamp).toDate() 
+          : DateTime.now(),
+      actorUid: map['actor_uid'] ?? '',
     );
-  }
-
-  // Firestore'a yazma
-  Map<String, dynamic> toMap() {
-    return {
-      'title': title,
-      'description': description,
-      'point_change': pointChange,
-      'type': type.toString().split('.').last,
-      'timestamp': FieldValue.serverTimestamp(),
-    };
-  }
-
-  // Enum dönüşüm yardımcıları
-  static LogType _stringToType(String? type) {
-    switch (type) {
-      case 'danger': return LogType.danger;
-      case 'warning': return LogType.warning;
-      case 'success': return LogType.success;
-      default: return LogType.info;
-    }
   }
 }

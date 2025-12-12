@@ -1,16 +1,17 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../services/auth_service.dart';
-import 'main_screen.dart';
+import 'dashboard_active_screen.dart';
+import 'login_screen.dart';
 
-// Renk Paleti
-const Color kBgDark = Color(0xFF121212);
-const Color kAccentCyan = Color(0xFF00E5FF);
-const Color kTextGrey = Color(0xFFB0BEC5);
-const Color kCardBg = Color(0xFF1E1E1E);
+// --- RENK PALETİ ---
+const Color kBgDark = Color(0xFF050505);
+const Color kCardBg = Color(0xFF141414);
+const Color kAccentCyan = Color(0xFF05D9E8);
+const Color kTextGrey = Color(0xFF757575);
 
 class VerificationWaitingScreen extends StatefulWidget {
   const VerificationWaitingScreen({super.key});
@@ -21,92 +22,96 @@ class VerificationWaitingScreen extends StatefulWidget {
 
 class _VerificationWaitingScreenState extends State<VerificationWaitingScreen> {
   final AuthService _authService = AuthService();
-  final User? user = FirebaseAuth.instance.currentUser;
-  
-  Timer? _checkTimer;
-  Timer? _resendTimer;
-  
-  bool _isVerified = false;
+  Timer? _timer;
+  bool _isEmailVerified = false;
   bool _canResendEmail = false;
-  int _resendCountdown = 60; // 60 saniye bekleme süresi
+  int _resendCountdown = 30;
 
   @override
   void initState() {
     super.initState();
-    
-    // 1. Otomatik Kontrolü Başlat: Her 3 saniyede bir onayladı mı diye bak.
-    _checkTimer = Timer.periodic(const Duration(seconds: 3), (_) => _checkVerificationStatus());
-    
-    // 2. Tekrar Gönder Sayacını Başlat
-    _startResendTimer();
+    _isEmailVerified = _authService.isEmailVerified();
+
+    if (!_isEmailVerified) {
+      _sendVerificationEmail();
+      // Her 3 saniyede bir kontrol et
+      _timer = Timer.periodic(const Duration(seconds: 3), (_) => _checkEmailVerified());
+      _startResendTimer();
+    }
   }
 
   @override
   void dispose() {
-    // Ekrandan çıkarken timer'ları durdurmak çok önemlidir.
-    _checkTimer?.cancel();
-    _resendTimer?.cancel();
+    _timer?.cancel();
     super.dispose();
   }
 
-  // Düzenli olarak çalışan onay kontrol fonksiyonu
-  Future<void> _checkVerificationStatus() async {
-    // Servise sor: Doğrulandı mı?
-    bool isVerified = await _authService.isEmailVerified();
+  Future<void> _checkEmailVerified() async {
+    // Kullanıcı durumunu yenile (Firebase'den güncel veriyi çek)
+    await _authService.reloadUser();
     
-    if (isVerified) {
-      // ONAYLANMIŞ!
-      _checkTimer?.cancel(); // Artık kontrole gerek yok
+    setState(() {
+      _isEmailVerified = _authService.isEmailVerified();
+    });
+
+    if (_isEmailVerified) {
+      _timer?.cancel();
       if (mounted) {
-        setState(() => _isVerified = true);
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("✅ E-posta doğrulandı! Yönlendiriliyorsunuz...", style: GoogleFonts.montserrat()),
-            backgroundColor: Colors.green,
-          ),
+        // Doğrulama tamam, Dashboard'a git
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const DashboardActiveScreen()),
         );
-        
-        // Kısa bir süre sonra ana ekrana yönlendir
-        Future.delayed(const Duration(seconds: 2), () {
-           Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (context) => const MainScreen()),
-          );
-        });
       }
     }
   }
 
-  // "Tekrar Gönder" butonu için geri sayım
+  Future<void> _sendVerificationEmail() async {
+    try {
+      await _authService.sendVerificationEmail();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Verification email sent!")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e")),
+        );
+      }
+    }
+  }
+
   void _startResendTimer() {
     setState(() {
       _canResendEmail = false;
-      _resendCountdown = 60;
+      _resendCountdown = 30;
     });
-    
-    _resendTimer?.cancel();
-    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) {
-        setState(() {
-          if (_resendCountdown > 0) {
-            _resendCountdown--;
-          } else {
-            _canResendEmail = true;
-            timer.cancel();
-          }
-        });
+    Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_resendCountdown > 0) {
+        if (mounted) setState(() => _resendCountdown--);
+      } else {
+        if (mounted) setState(() => _canResendEmail = true);
+        timer.cancel();
       }
     });
   }
 
-  // E-postayı tekrar gönderme işlemi
-  Future<void> _handleResendEmail() async {
-    try {
-      await _authService.sendVerificationEmail();
-      _startResendTimer(); // Sayacı tekrar başlat
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Doğrulama e-postası tekrar gönderildi.", style: GoogleFonts.montserrat()), backgroundColor: kAccentCyan));
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Hata: $e", style: GoogleFonts.montserrat()), backgroundColor: Colors.red));
+  void _handleResend() {
+    if (_canResendEmail) {
+      _sendVerificationEmail();
+      _startResendTimer();
+    }
+  }
+
+  void _signOut() async {
+    _timer?.cancel();
+    await _authService.signOut();
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+        (route) => false,
+      );
     }
   }
 
@@ -114,86 +119,69 @@ class _VerificationWaitingScreenState extends State<VerificationWaitingScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: kBgDark,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Text("E-posta Doğrulama", style: GoogleFonts.montserrat(fontWeight: FontWeight.bold)),
-        centerTitle: true,
-        automaticallyImplyLeading: false, // Geri butonunu gizle
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(30.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-             Container(
-              padding: const EdgeInsets.all(30),
-              decoration: BoxDecoration(
-                color: kCardBg,
-                shape: BoxShape.circle,
-                border: Border.all(color: kAccentCyan.withOpacity(0.3), width: 2),
-              ),
-              child: Icon(_isVerified ? Icons.mark_email_read_rounded : Icons.mark_email_unread_rounded, size: 80, color: kAccentCyan),
-            ),
-            const SizedBox(height: 30),
-            Text(
-              _isVerified ? "Doğrulama Başarılı!" : "Lütfen E-postanızı Kontrol Edin",
-              style: GoogleFonts.montserrat(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            RichText(
-              textAlign: TextAlign.center,
-              text: TextSpan(
-                style: GoogleFonts.montserrat(color: kTextGrey, fontSize: 14),
-                children: [
-                  TextSpan(text: user?.email, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                  const TextSpan(text: " adresine bir doğrulama bağlantısı gönderdik.\nHesabınızı aktif hale getirmek için lütfen o bağlantıya tıklayın."),
-                ],
-              ),
-            ),
-            const SizedBox(height: 40),
-            
-            // Otomatik kontrol ediliyor bilgisi
-            if (!_isVerified)
-             Row(
-               mainAxisAlignment: MainAxisAlignment.center,
-               children: [
-                 SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: kAccentCyan.withOpacity(0.5))),
-                 const SizedBox(width: 12),
-                 Text("Onay bekleniyor...", style: GoogleFonts.montserrat(color: kTextGrey, fontStyle: FontStyle.italic)),
-               ],
-             ),
-             const SizedBox(height: 40),
-
-            // Tekrar Gönder Butonu
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: (_canResendEmail && !_isVerified) ? _handleResendEmail : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kCardBg,
-                  foregroundColor: kAccentCyan,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: kAccentCyan.withOpacity(_canResendEmail ? 0.5 : 0.1))),
-                  disabledBackgroundColor: kCardBg.withOpacity(0.5),
-                  disabledForegroundColor: kTextGrey,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(30.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.mark_email_unread_outlined, size: 80, color: kAccentCyan),
+              const SizedBox(height: 30),
+              
+              Text(
+                "VERIFY YOUR EMAIL",
+                style: GoogleFonts.rajdhani(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2.0,
                 ),
-                icon: const Icon(Icons.send_rounded),
-                label: Text(_canResendEmail ? "E-postayı Tekrar Gönder" : "Tekrar gönder (${_resendCountdown}s)", style: GoogleFonts.montserrat(fontWeight: FontWeight.w600)),
               ),
-            ),
-            
-            const SizedBox(height: 24),
-            // Çıkış Yap / Farklı Hesap Butonu
-            TextButton(
-              onPressed: () {
-                 _authService.signOut();
-                 Navigator.pop(context); // Login ekranına dön
-              },
-               child: Text("Farklı bir hesapla giriş yap", style: GoogleFonts.montserrat(color: kTextGrey)),
-            )
-          ],
+              const SizedBox(height: 16),
+              
+              Text(
+                "We have sent a verification link to your email address. Please verify to access the protocol.",
+                textAlign: TextAlign.center,
+                style: GoogleFonts.montserrat(color: kTextGrey, fontSize: 14, height: 1.5),
+              ),
+              
+              const SizedBox(height: 40),
+              
+              // Resend Button
+              SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton(
+                  onPressed: _canResendEmail ? _handleResend : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kCardBg,
+                    side: BorderSide(color: _canResendEmail ? kAccentCyan : Colors.white10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: Text(
+                    _canResendEmail ? "RESEND EMAIL" : "WAIT ${_resendCountdown}s",
+                    style: GoogleFonts.rajdhani(
+                      color: _canResendEmail ? kAccentCyan : kTextGrey,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 20),
+              
+              // Logout Button
+              TextButton.icon(
+                onPressed: _signOut,
+                icon: const Icon(Icons.arrow_back, color: kTextGrey, size: 18),
+                label: Text(
+                  "Return to Login",
+                  style: GoogleFonts.montserrat(color: kTextGrey),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

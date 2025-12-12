@@ -5,24 +5,24 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
-    // Kimlik Tanımı
+    // Namespace manuel olarak eklendi, hatayı önler
     namespace 'im.zoe.labs.flutter_notification_listener'
     compileSdkVersion 34
 
-    // BuildConfig Hatası İçin
     buildFeatures {
         buildConfig = true
     }
 
-    // Java Sürüm Sabitleme
+    // --- KRİTİK DÜZELTME: JAVA 17'YE YÜKSELTİLDİ ---
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = '1.8'
+        jvmTarget = '17'
     }
+    // -----------------------------------------------
 
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
@@ -34,13 +34,10 @@ android {
 }
 
 dependencies {
-    // --- GÜNCELLEME: Temel Bağımlılıklar Eklendi ---
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
     
-    // AndroidX Startup ve Core (Crash hatasını çözen kısım)
+    // AndroidX Bağımlılıkları
     implementation 'androidx.startup:startup-runtime:1.1.1'
     implementation 'androidx.core:core-ktx:1.12.0'
-    
-    // MultiDex Desteği (Kapasite sorunu için)
     implementation 'androidx.multidex:multidex:2.0.1'
 }

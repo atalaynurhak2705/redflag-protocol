@@ -47,7 +47,12 @@ class FlutterNotificationListenerPlugin : FlutterPlugin, MethodChannel.MethodCal
       event.setStreamHandler(this)
     }
 
-    flutterJNI.attachToNative() 
+    // CRASH FIX: Attach işlemini güvenli hale getirdik
+    try {
+        flutterJNI.attachToNative() 
+    } catch (e: Exception) {
+        Log.w(TAG, "Warning on attach: ${e.message}")
+    }
 
     // store the flutter engine
     val engine = flutterPluginBinding.flutterEngine
@@ -74,7 +79,18 @@ class FlutterNotificationListenerPlugin : FlutterPlugin, MethodChannel.MethodCal
       event.setStreamHandler(null) 
       eventChannel = null 
     }
-    flutterJNI.attachToNative() 
+    
+    // --- CRASH FIX: KRİTİK DÜZELTME BURADA ---
+    // Uygulama kapanırken burası hataya sebep oluyordu.
+    try {
+        if (flutterJNI.isAttached) {
+            flutterJNI.detachFromNativeAndReleaseResources()
+        }
+    } catch (e: Exception) {
+        // Hata olursa yutuyoruz, çünkü uygulama zaten kapanıyor.
+        Log.e(TAG, "Error during detach (Ignored): ${e.message}")
+    }
+    // ----------------------------------------
   }
 
   @RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN_MR2)
