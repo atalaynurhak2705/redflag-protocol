@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
-// import 'package:flutter_switch/flutter_switch.dart'; // <-- BU SATIR HATALIYDI, KALDIRILDI
 
 import '../services/auth_service.dart';
 import '../services/signals_service.dart';
+import '../services/background_service.dart'; // <--- İŞTE EKSİK OLAN BU SATIRDI
 import '../models/permission_model.dart';
-import 'login_screen.dart';
+import 'landing_screen.dart'; // Çıkışta Landing Page'e gitmek için
 
 // --- V5.0 RENK PALETİ ---
 const Color kBgDark = Color(0xFF050505);
@@ -80,13 +80,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  // --- GÜVENLİ ÇIKIŞ FONKSİYONU ---
   void _signOut() async {
-    await _authService.signOut();
+    // 1. Önce Arka Plan Servisini Durdur
+    // (Artık import edildiği için hata vermeyecek)
+    BackgroundService().stopService();
+    
+    // 2. Sayfadan Ayrıl (Landing Page'e git)
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      MaterialPageRoute(builder: (context) => const LandingScreen()),
       (route) => false,
     );
+    
+    // 3. EN SON Auth'u Kapat
+    // Böylece "Permission Denied" hatası almazsın çünkü sayfa kapanmış olur.
+    await _authService.signOut();
   }
 
   @override
@@ -227,12 +236,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Text(title, style: GoogleFonts.montserrat(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
             ],
           ),
-          // STANDART FLUTTER SWITCH (Paket gerektirmez)
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: kCardBg, // Düğme rengi (Aktifken)
-            activeTrackColor: kAccentCyan, // Arka plan (Aktifken)
+            activeColor: kCardBg, 
+            activeTrackColor: kAccentCyan, 
             inactiveThumbColor: kTextGrey,
             inactiveTrackColor: Colors.white.withOpacity(0.1),
           ),

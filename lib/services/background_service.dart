@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:ui';
 import 'dart:isolate';
 
-// Paket ismini doğru import ediyoruz
 import 'package:flutter_notification_listener/flutter_notification_listener.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -17,8 +16,6 @@ import '../models/permission_model.dart';
 // --- TOP-LEVEL CALLBACK ---
 @pragma('vm:entry-point')
 void onNotificationData(NotificationEvent event) {
-  // Arka plan izolesi. Burası şimdilik boş kalabilir, 
-  // çünkü plugin.dart içindeki _defaultCallbackHandle zaten port'a veriyi atıyor.
   print("🔔 Isolate Tetiklendi: ${event.packageName}");
 }
 
@@ -39,7 +36,7 @@ class BackgroundService {
 
   // --- MÜZİK UYGULAMALARI LİSTESİ ---
   final List<String> _musicApps = [
-    'com.spotify.music', // Spotify
+    'com.spotify.music', 
     'com.google.android.apps.youtube.music',
     'com.apple.android.music',
     'deezer.android.app',
@@ -73,33 +70,24 @@ class BackgroundService {
     if (user == null) return;
 
     try {
-      // DÜZELTME 1: Sınıf adı 'NotificationsListener' olarak güncellendi
       var hasPerm = await NotificationsListener.hasPermission;
       if (hasPerm != true) {
-        print("⚠️ SİSTEM İZNİ YOK: Kullanıcı Ayarlardan 'Notification Access' vermemiş!");
+        print("⚠️ SİSTEM İZNİ YOK: Notification Access gerekli!");
         return;
       }
 
-      // DÜZELTME 2: 'NotificationsListener' kullanıldı
       await NotificationsListener.initialize(callbackHandle: onNotificationData);
       
-      // Port Kurulumu (Veriyi yakalamak için şart)
       _port = ReceivePort();
-      // 'notifications_send_port' ismi plugin.dart içindeki SEND_PORT_NAME ile aynı olmalı
       IsolateNameServer.removePortNameMapping("notifications_send_port"); 
       IsolateNameServer.registerPortWithName(_port!.sendPort, "notifications_send_port");
 
-      // Portu Dinle
       _port!.listen((message) {
-        // Gelen mesaj NotificationEvent tipindedir
         if (message is NotificationEvent) {
           _processNotificationEvent(message);
-        } else {
-          print("❓ Bilinmeyen veri tipi: $message");
         }
       });
 
-      // DÜZELTME 3: Servisi Başlat
       await NotificationsListener.startService();
       print("👂 KULAK AÇIK: Dinlemeye başladı...");
 
@@ -115,59 +103,52 @@ class BackgroundService {
 
     final String pkg = event.packageName ?? "unknown";
     final String title = event.title ?? "";
-    final String body = event.text ?? ""; // Şarkıcı adı genelde buradadır
+    final String body = event.text ?? "";
 
-    print("🔥 DEBUG: Bildirim Geldi -> $pkg | $title");
+    // 1. Filtreleme: Sistem bildirimlerini ve boş başlıkları ele
+    if (pkg.contains("android.system") || 
+        pkg.contains("com.android.systemui") || 
+        pkg.contains("com.google.android.gms") ||
+        title.isEmpty) return;
 
     PermissionModel? perms = await _getMyPermissions(user.uid);
-    bool isMediaAllowed = perms?.isMediaPermitted ?? true; 
 
-    // --- MEDYA KONTROLÜ ---
+    // 2. MEDYA KONTROLÜ
     if (_musicApps.contains(pkg)) {
-      print("🔥 DEBUG: Müzik Uygulaması Tespit Edildi! ($pkg)");
-      
-      if (!isMediaAllowed) {
-        print("⛔ Medya izni veritabanında kapalı.");
-        return;
+      bool isMediaAllowed = perms?.isMediaPermitted ?? true;
+      if (isMediaAllowed) {
+        final mediaData = MediaModel(
+          isPlaying: true, 
+          packageName: pkg,
+          title: title,
+          artist: body,
+          timestamp: DateTime.now().toUtc(),
+        );
+        await _db.collection('users').doc(user.uid).collection('device_status').doc('media').set(mediaData.toMap());
+        print("✅ MEDYA GÜNCELLENDİ: $title");
       }
-
-      if (title.isEmpty || title.contains("Android System")) return;
-
-      final mediaData = MediaModel(
-        isPlaying: true, 
-        packageName: pkg,
-        title: title,
-        artist: body,
-        timestamp: DateTime.now().toUtc(),
-      );
-
-      print("📝 FIRESTORE YAZILIYOR: ${mediaData.toMap()}");
-
-      await _db.collection('users').doc(user.uid).collection('device_status').doc('media').set(mediaData.toMap());
-      print("✅ MEDYA YAZILDI!");
-      return;
+      return; // Medya olarak işlendiyse bildirim sayacına ekleme
     }
 
-    // --- DİĞER BİLDİRİMLER (Şimdilik pasif) ---
-    /*
-    if (pkg.contains("android.system") || pkg.contains("com.google.android.gms")) return;
-    try {
-      final notificationData = {
-        'package_name': pkg,
-        'title': title,
-        'timestamp': FieldValue.serverTimestamp(),
-        'is_read': false,
-        'category': _categorizeApp(pkg),
-      };
-      // await _db.collection('users').doc(user.uid).collection('notifications').add(notificationData);
-    } catch (e) {
-      print("❌ Hata: $e");
+    // 3. GENEL BİLDİRİM SAYACI (Eskiden yorum satırı olan kısım)
+    bool isNotifAllowed = perms?.isNotificationsPermitted ?? true;
+    if (isNotifAllowed) {
+      try {
+        await _db.collection('users').doc(user.uid).collection('notifications').add({
+          'package_name': pkg,
+          'timestamp': FieldValue.serverTimestamp(), // Dashboard buradan "bugünküleri" sayıyor
+          'category': _categorizeApp(pkg),
+        });
+        print("✅ BİLDİRİM KAYDEDİLDİ: $pkg");
+      } catch (e) {
+        print("❌ Bildirim yazma hatası: $e");
+      }
     }
-    */
   }
 
   String _categorizeApp(String packageName) {
     if (packageName.contains("whatsapp")) return "Message";
+    if (packageName.contains("instagram") || packageName.contains("facebook")) return "Social";
     return "Other";
   }
 
@@ -176,13 +157,10 @@ class BackgroundService {
     if (user == null) { stopService(); return; }
     
     PermissionModel? perms = await _getMyPermissions(user.uid);
-    // İzin null ise varsayılan olarak devam et (Test için)
     
-    // Batarya
     if (perms?.isBatteryPermitted ?? true) {
        await _processBattery(user.uid);
     }
-    // Ağ
     if (perms?.isNetworkPermitted ?? true) {
        await _processNetwork(user.uid);
     }

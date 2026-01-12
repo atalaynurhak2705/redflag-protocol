@@ -20,7 +20,8 @@ class SignalsService {
   final Battery _battery = Battery();
   final Connectivity _connectivity = Connectivity();
 
-  static const int MANUAL_SIGNAL_REWARD = 15;
+  static const int MANUAL_SIGNAL_REWARD = 25; 
+  static const int NUDGE_COST = 20; // KESİN OLARAK 20 AYARLANDI
   static const int RATE_LIMIT_MINUTES = 30;
 
   String? get _currentUserId => _auth.currentUser?.uid;
@@ -29,21 +30,19 @@ class SignalsService {
     return _db.collection('users').doc(userId).collection('device_status');
   }
 
-  // --- 1. MANUEL SİNYAL GÖNDERME ---
+  // --- 1. MANUEL SİNYAL GÖNDERME (PING) ---
   Future<void> sendManualSignal() async {
     final user = _auth.currentUser;
     if (user == null) throw Exception("Oturum açmış kullanıcı bulunamadı.");
     
     final userRef = _db.collection('users').doc(user.uid);
+    // Verileri hazırla
     final int batteryLevel = await _battery.batteryLevel;
     final BatteryState batteryState = await _battery.batteryState;
     final bool isCharging = batteryState == BatteryState.charging || batteryState == BatteryState.full;
-    
     final ConnectivityResult connectivityResult = await _connectivity.checkConnectivity();
-    String networkStatus = 'Unknown';
-    if (connectivityResult == ConnectivityResult.wifi) networkStatus = 'WiFi';
-    else if (connectivityResult == ConnectivityResult.mobile) networkStatus = 'Mobile';
-    else if (connectivityResult == ConnectivityResult.none) networkStatus = 'Offline';
+    String networkStatus = (connectivityResult == ConnectivityResult.wifi) ? 'WiFi' 
+                         : (connectivityResult == ConnectivityResult.mobile) ? 'Mobile' : 'Offline';
 
     await _db.runTransaction((transaction) async {
       final userSnapshot = await transaction.get(userRef);
@@ -51,38 +50,37 @@ class SignalsService {
       
       final data = userSnapshot.data() as Map<String, dynamic>;
 
+      // Süre kontrolü
       if (data.containsKey('last_manual_signal') && data['last_manual_signal'] != null) {
         Timestamp lastSignal = data['last_manual_signal'];
         final difference = DateTime.now().difference(lastSignal.toDate()).inMinutes;
         if (difference < RATE_LIMIT_MINUTES) {
-          throw Exception("Sinyal göndermek için ${RATE_LIMIT_MINUTES - difference} dakika beklemelisiniz.");
+          throw Exception("Wait ${RATE_LIMIT_MINUTES - difference}m to ping again.");
         }
       }
 
+      // Güncellemeler
       transaction.update(userRef, {
         'last_active': FieldValue.serverTimestamp(),
         'last_manual_signal': FieldValue.serverTimestamp(),
-        // <--- DÜZELTİLDİ: 'points' yerine 'trust_score' güncelleniyor
         'trust_score': (data['trust_score'] ?? 1000) + MANUAL_SIGNAL_REWARD,
       });
 
       final batteryRef = _getDeviceStatusRef(user.uid).doc('battery');
       transaction.set(batteryRef, {
-        'level': batteryLevel, 
-        'isCharging': isCharging, 
-        'timestamp': FieldValue.serverTimestamp()
+        'level': batteryLevel, 'isCharging': isCharging, 'timestamp': FieldValue.serverTimestamp()
       }, SetOptions(merge: true));
 
       final networkRef = _getDeviceStatusRef(user.uid).doc('network');
       transaction.set(networkRef, {
-        'status': networkStatus, 
-        'timestamp': FieldValue.serverTimestamp()
+        'status': networkStatus, 'timestamp': FieldValue.serverTimestamp()
       }, SetOptions(merge: true));
       
+      // Kendine Log
       final logRef = _db.collection('users').doc(user.uid).collection('activity_logs').doc();
       transaction.set(logRef, {
-        'title': 'MANUEL SİNYAL',
-        'description': 'Partnerine anlık veri gönderildi. +$MANUAL_SIGNAL_REWARD TP',
+        'title': 'SENT PING',
+        'description': 'Shared status manually. +$MANUAL_SIGNAL_REWARD TP',
         'point_change': MANUAL_SIGNAL_REWARD,
         'type': 'success',
         'timestamp': FieldValue.serverTimestamp(),
@@ -91,24 +89,96 @@ class SignalsService {
     });
   }
 
-  // --- VERİ OKUMA VE DİNLEME ---
+  // --- 2. NUDGE (DÜRTME) GÖNDERME ---
+  Future<void> sendNudge(String partnerUid) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    final userRef = _db.collection('users').doc(user.uid);
+    
+    await _db.runTransaction((transaction) async {
+      final userSnapshot = await transaction.get(userRef);
+      if (!userSnapshot.exists) return;
+      
+      final data = userSnapshot.data() as Map<String, dynamic>;
+      int currentScore = data['trust_score'] ?? 1000;
+
+      if (currentScore < NUDGE_COST) {
+        throw Exception("Insufficient Trust Points.");
+      }
+
+      // Puan düş
+      transaction.update(userRef, {
+        'trust_score': currentScore - NUDGE_COST,
+      });
+
+      // Kendi Loguna ekle
+      final myLogRef = _db.collection('users').doc(user.uid).collection('activity_logs').doc();
+      transaction.set(myLogRef, {
+        'title': 'SENT NUDGE',
+        'description': 'You nudged your partner. -$NUDGE_COST TP',
+        'point_change': -NUDGE_COST,
+        'type': 'warning',
+        'timestamp': FieldValue.serverTimestamp(),
+        'actor_uid': user.uid,
+      });
+
+      // Partnerin Loguna ekle (BİLDİRİM GİBİ)
+      final partnerLogRef = _db.collection('users').doc(partnerUid).collection('activity_logs').doc();
+      transaction.set(partnerLogRef, {
+        'title': '⚠️ NUDGE ALERT',
+        'description': 'Your partner wants you to be active!',
+        'point_change': 0,
+        'type': 'danger', // Kırmızı uyarı
+        'timestamp': FieldValue.serverTimestamp(),
+        'actor_uid': user.uid,
+      });
+    });
+  }
+
+  // --- MOOD GÜNCELLEME (DÜZELTİLDİ) ---
+  Future<void> updateMyMood(String moodValue) async {
+    if (_currentUserId == null) return;
+    
+    final userRef = _db.collection('users').doc(_currentUserId);
+    
+    await _db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(userRef);
+      if (!snapshot.exists) return;
+
+      final data = snapshot.data() as Map<String, dynamic>;
+      int currentScore = data['trust_score'] ?? 1000;
+
+      transaction.update(userRef, {
+        'current_mood': moodValue,
+        'last_mood_update': FieldValue.serverTimestamp(),
+        'trust_score': currentScore + 10, // +10 Puan
+      });
+
+      final logRef = _db.collection('users').doc(_currentUserId).collection('activity_logs').doc();
+      transaction.set(logRef, {
+        'title': 'MOOD UPDATE',
+        'description': 'Mood changed to $moodValue. +10 TP',
+        'point_change': 10,
+        'type': 'success',
+        'timestamp': FieldValue.serverTimestamp(),
+        'actor_uid': _currentUserId,
+      });
+    });
+  }
+
+  // --- OKUMA VE DİNLEME ---
   Stream<MediaModel?> streamMediaStatus(String partnerId) {
     return _getDeviceStatusRef(partnerId).doc('media').snapshots().map((doc) {
-      if (doc.exists && doc.data() != null) {
-        return MediaModel.fromMap(doc.data() as Map<String, dynamic>);
-      }
+      if (doc.exists && doc.data() != null) return MediaModel.fromMap(doc.data() as Map<String, dynamic>);
       return null;
     });
   }
   
   Stream<List<LogModel>> streamLogs(String userId) {
     return _db.collection('users').doc(userId).collection('activity_logs')
-        .orderBy('timestamp', descending: true)
-        .limit(50)
-        .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => LogModel.fromMap(doc.id, doc.data()))
-            .toList());
+        .orderBy('timestamp', descending: true).limit(50).snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) => LogModel.fromMap(doc.id, doc.data())).toList());
   }
 
   Future<BatteryModel?> getBatteryStatus(String partnerId) async {
@@ -123,14 +193,6 @@ class SignalsService {
     try {
       DocumentSnapshot doc = await _getDeviceStatusRef(partnerId).doc('network').get();
       if (doc.exists && doc.data() != null) return NetworkModel.fromMap(doc.data() as Map<String, dynamic>);
-    } catch (_) {}
-    return null;
-  }
-
-  Future<MediaModel?> getMediaStatus(String partnerId) async {
-    try {
-      DocumentSnapshot doc = await _getDeviceStatusRef(partnerId).doc('media').get();
-      if (doc.exists && doc.data() != null) return MediaModel.fromMap(doc.data() as Map<String, dynamic>);
     } catch (_) {}
     return null;
   }
@@ -165,18 +227,9 @@ class SignalsService {
   Future<PermissionModel?> getPartnerPermissions(String partnerId) async {
     try {
       DocumentSnapshot doc = await _db.collection('users').doc(partnerId).collection('permissions').doc('status').get();
-      if (doc.exists && doc.data() != null) {
-        return PermissionModel.fromMap(doc.data() as Map<String, dynamic>);
-      }
+      if (doc.exists && doc.data() != null) return PermissionModel.fromMap(doc.data() as Map<String, dynamic>);
     } catch (_) {}
-    
-    return PermissionModel(
-      timestamp: DateTime.now(),
-      isBatteryPermitted: false,
-      isNetworkPermitted: false,
-      isMediaPermitted: false,
-      isNotificationsPermitted: false,
-    );
+    return PermissionModel(timestamp: DateTime.now());
   }
 
   Future<void> updatePermissions(PermissionModel permissions) async {
@@ -189,14 +242,6 @@ class SignalsService {
   Future<PermissionModel?> getMyPermissions() async {
     if (_currentUserId == null) return null;
     return getPartnerPermissions(_currentUserId!);
-  }
-
-  Future<void> updateMyMood(String moodValue) async {
-    if (_currentUserId == null) return;
-    await _db.collection('users').doc(_currentUserId).update({
-      'current_mood': moodValue,
-      'last_mood_update': DateTime.now().toUtc().toIso8601String(),
-    });
   }
 
   Future<void> addLog({
